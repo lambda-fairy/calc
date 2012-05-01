@@ -1,0 +1,10 @@
+calc
+----
+
+**calc** (for want of a better name) is a simple scientific calculator written in Python.
+
+It supports:
+
+* Operators: associativity and precedence (BEDMAS), unary operators, functions.
+* Implicit multiplication (`2 x y` is interpreted as `2 * x * y`).
+* Extensible: new operators can be defined trivially.
