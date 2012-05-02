@@ -171,7 +171,7 @@ def tokenize(s):
 
         # Numbers
         if d["number"] is not None:
-            tokens.append(Number(d["number"], pos=m.start()))
+            tokens.append(Number(d["number"], pos))
 
         # Symbols are interpreted as operators
         elif d["symbol"]:
@@ -179,9 +179,9 @@ def tokenize(s):
 
             # Special-case '(' and ')'
             if key == "(":
-                tokens.append(LeftParenthesis(pos=m.start()))
+                tokens.append(LeftParenthesis(pos))
             elif key == ")":
-                tokens.append(RightParenthesis(pos=m.start()))
+                tokens.append(RightParenthesis(pos))
 
             # Decide what type of operator we have
             else:
@@ -189,7 +189,7 @@ def tokenize(s):
                 # Right associative unary operators follow funny rules
                 if should_be_right_unary(prev_token):
                     if key in unary and unary[key].assoc == RIGHT:
-                        tokens.append(unary[key](pos=m.start()))
+                        tokens.append(unary[key](pos))
                     else:
                         if key not in unary and key not in binary:
                             raise CalcSyntaxError("invalid operator: %s" % key)
@@ -197,9 +197,9 @@ def tokenize(s):
                             raise CalcSyntaxError("operator '%s' is in the wrong place" % key)
                 else:
                     if key in unary and unary[key].assoc == LEFT:
-                        tokens.append(unary[key](pos=m.start()))
+                        tokens.append(unary[key](pos))
                     elif key in binary:
-                        tokens.append(binary[key](pos=m.start()))
+                        tokens.append(binary[key](pos))
                     else:
                         if key not in unary and key not in binary:
                             raise CalcSyntaxError("invalid operator: %s" % key)
@@ -214,7 +214,7 @@ def tokenize(s):
                 tokens.append(constants[key])
             # ... or functions.
             elif key in unary:
-                tokens.append(unary[key](pos=m.start()))
+                tokens.append(unary[key](pos))
             else:
                 raise CalcNameError("I don't know what '%s' means" % key)
 
