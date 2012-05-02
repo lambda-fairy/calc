@@ -16,7 +16,6 @@ calclib - Stuff used by chrisyco's Calculator
 import re
 import operator
 import math
-from copy import copy
 
 # Python 3.x support
 try:
@@ -27,7 +26,11 @@ except NameError:
 LEFT, RIGHT = 1, 2
 UNARY, BINARY = 1, 2
 
-Number = float # I might decide to change this later
+class Number(float):
+    def __new__(cls, value, pos=None):
+        self = float.__new__(Number, value)
+        self.pos = pos
+        return self
 
 class CalcSyntaxError(ValueError):
     pass
@@ -46,20 +49,29 @@ class Operator(object):
     rank = None
     func = None
     assoc = None
-    def __init__(self, **extra_attrs):
+
+    def __init__(self, pos=None):
         if self.__class__ == Operator:
-            raise NotImplementedError("Operator class cannot be called directly")
-        for key, value in extra_attrs.items():
-            setattr(self, key, value)
+            raise NotImplementedError("Operator class is abstract; it cannot be called directly")
+        self.pos = pos
+
     def __call__(self, *args):
+        """Call the operator with the specified arguments."""
         return self.__class__.func(*args)
+
     def __repr__(self):
         return self.__class__.__name__
+
     def __str__(self):
         return self.__class__.name
 
-def fwrapper(func):
-    """A little hack to change the message returned by ZeroDivisionError"""
+def wrap_div_by_zero(func):
+    """A little hack to change the message returned by ZeroDivisionError.
+
+    The default message is "float division by zero", which sounds
+    confusing (what's a "float"?) so this wrapper changes it to simply
+    "division by zero" instead.
+    """
     def newfunc(*args):
         try:
             return func(*args)
@@ -68,17 +80,18 @@ def fwrapper(func):
     return newfunc
 
 def create_operator_class(clsname, name_, nargs_, rank_, func_, assoc_):
-    """Create a new operator class."""
+    """Factory function for creating a new operator class."""
     class newop(Operator):
         name = name_
         nargs = nargs_
         rank = rank_
-        func = staticmethod(fwrapper(func_))
+        func = staticmethod(wrap_div_by_zero(func_))
         assoc = assoc_
     newop.__name__ = clsname
     return newop
 
 def factorial(num):
+    """Factorial function."""
     if num != int(num):
         raise ValueError("cannot calculate factorial of %s: number must be an integer" % num)
     elif num < 0:
@@ -110,6 +123,8 @@ unary['arcsin'] = unary['asin']
 unary['arccos'] = unary['acos']
 unary['arctan'] = unary['atan']
 
+# Parentheses aren't technically operators, but it's easier on the
+# parser to treat them that way
 LeftParenthesis = \
     create_operator_class('LeftParenthesis', '(', 0, 9999, None, 0)
 RightParenthesis = \
@@ -132,31 +147,47 @@ token_re = re.compile(r"""
     \s*
 """, re.UNICODE | re.VERBOSE)
 
+def should_be_right_unary(prev_token):
+    """Helper function for tokenize()."""
+    # A symbol should be interpreted as a right associative unary operator if:
+    # 1. It is the first symbol in the expression
+    return (prev_token is None
+    # 2. It is preceded by a '('
+            or isinstance(prev_token, LeftParenthesis)
+    # 3. It is preceded by a binary operator or another right associative unary operator
+            or (isinstance(prev_token, Operator)
+                and (prev_token.nargs == 2 or prev_token.assoc == RIGHT)))
+
 def tokenize(s):
     """Convert a string into a list of tokens."""
     s = s.strip()
     pos = 0
-    len_s = len(s)
     tokens = []
-    while pos < len_s:
+
+    while pos < len(s):
+        # Match the regex against the string
         m = token_re.match(s, pos)
         d = m.groupdict()
+
+        # Numbers
         if d["number"] is not None:
-            tokens.append(Number(d["number"]))
+            tokens.append(Number(d["number"], pos=m.start()))
+
+        # Symbols are interpreted as operators
         elif d["symbol"]:
             key = d["symbol"]
-            # special-case ( )
+
+            # Special-case '(' and ')'
             if key == "(":
                 tokens.append(LeftParenthesis(pos=m.start()))
             elif key == ")":
                 tokens.append(RightParenthesis(pos=m.start()))
+
+            # Decide what type of operator we have
             else:
-                last = tokens[-1] if len(tokens) > 0 else None
-                if (len(tokens) == 0
-                    or isinstance(last, LeftParenthesis)
-                    or (isinstance(last, Operator)
-                        and (last.nargs == 2
-                             or last.assoc == RIGHT))):
+                prev_token = tokens[-1] if len(tokens) > 0 else None
+                # Right associative unary operators follow funny rules
+                if should_be_right_unary(prev_token):
                     if key in unary and unary[key].assoc == RIGHT:
                         tokens.append(unary[key](pos=m.start()))
                     else:
@@ -174,14 +205,20 @@ def tokenize(s):
                             raise CalcSyntaxError("invalid operator: %s" % key)
                         else:
                             raise CalcSyntaxError("operator '%s' is in the wrong place" % key)
+
+        # Words can be interpreted as either...
         elif d["word"]:
             key = d["word"]
+            # ... variables
             if key in constants:
                 tokens.append(constants[key])
+            # ... or functions.
             elif key in unary:
                 tokens.append(unary[key](pos=m.start()))
             else:
                 raise CalcNameError("I don't know what '%s' means" % key)
+
+        # Update the position to read the next token
         pos = m.end()
     return tokens
 
@@ -192,7 +229,7 @@ def implicit_multiplication(tokens):
     while i < len(tokens)-1:
         if isinstance(tokens[i], (RightParenthesis, Number)) and \
            isinstance(tokens[i+1], (LeftParenthesis, Number)):
-            tokens.insert(i+1, binary['*']())
+            tokens.insert(i+1, binary['*'](pos=tokens[i+1].pos))
         i += 1
     return tokens
 
@@ -202,14 +239,26 @@ def to_rpn(tokens):
 
     See <http://en.wikipedia.org/wiki/Shunting_yard_algorithm>
     """
+    # Output, in reverse Polish order
     out = []
+    # Operator stack
     stack = []
+
     for token in tokens:
+
+        # Number
         if isinstance(token, Number):
+            # Write directly to output
             out.append(token)
+
+        # Left bracket
         elif isinstance(token, LeftParenthesis):
+            # Push onto the stack
             stack.append(token)
+
+        # Right bracket
         elif isinstance(token, RightParenthesis):
+            # Pop off operators, appending them to the output, until we hit a left bracket
             try:
                 while not isinstance(stack[-1], LeftParenthesis):
                     out.append(stack.pop())
@@ -217,24 +266,34 @@ def to_rpn(tokens):
                 raise CalcSyntaxError("too many right parentheses")
             else:
                 stack.pop() # the left parenthesis
+
+        # Other operators
         elif isinstance(token, Operator):
+            # Pop off any lower ranking operators
             while (stack and
                    ((token.assoc == LEFT and token.rank >= stack[-1].rank)
                     or (token.assoc == RIGHT and token.rank > stack[-1].rank))):
                 out.append(stack.pop())
+            # Then push the current operator onto the stack
             stack.append(token)
+
         else:
             raise ValueError("found foreign object: %s" % repr(token))
+
+    # Finally, pop off anything still on the stack
     while stack:
         operator = stack.pop()
         if isinstance(operator, LeftParenthesis):
             raise CalcSyntaxError("too many left parentheses")
         else:
             out.append(operator)
+
     return out
 
 def eval_rpn(tokens):
+    """Evaluate a list of tokens in reverse Polish order."""
     stack = []
+
     for token in tokens:
         if isinstance(token, Number):
             stack.append(token)
@@ -242,18 +301,20 @@ def eval_rpn(tokens):
             if len(stack) < token.nargs:
                 raise CalcSyntaxError("not enough values for %s" % token)
             else:
+                # Replace the operator's arguments with the result
                 stack[-token.nargs:] = [token(*stack[-token.nargs:])]
         else:
-            raise ValueError("found strange object: %s" % repr(token))
+            raise ValueError("found alien object: %s" % repr(token))
+
+    # At the end of the computation, there should be exactly one value
+    # left on the stack
     if len(stack) != 1:
         raise CalcSyntaxError("I don't understand what you're trying to say")
     else:
         return stack[0]
 
 def main():
-    """
-    Test a few things.
-    """
+    """Test a few things."""
     # test the tokenizer
     for s in ("123", "5.5", ".15", "26.", # individual tokens
               "- 66.1+ 2",        # basic expression
@@ -262,6 +323,7 @@ def main():
               "-2^2",
               "4.2e"           # implied multiplication
               ):
+        print('testing %s' % s)
         print(s.ljust(12) + " ==> " + str(eval_rpn(to_rpn(implicit_multiplication(tokenize(s))))))
 
 if __name__ == "__main__":
