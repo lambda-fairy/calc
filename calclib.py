@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""
-calclib - Stuff used by chrisyco's Calculator
-"""
+"""calclib - Stuff used by calc"""
+
+from __future__ import print_function
 
 # ---------------------------
 #  The Process in a Nutshell
@@ -51,7 +51,7 @@ class Operator(object):
     assoc = None
 
     def __init__(self, pos=None):
-        if self.__class__ == Operator:
+        if self.__class__ is Operator:
             raise NotImplementedError("Operator class is abstract; it cannot be called directly")
         self.pos = pos
 
@@ -323,8 +323,8 @@ def main():
               "-2^2",
               "4.2e"           # implied multiplication
               ):
-        print('testing %s' % s)
-        print(s.ljust(12) + " ==> " + str(eval_rpn(to_rpn(implicit_multiplication(tokenize(s))))))
+        print('testing', s)
+        print(s.ljust(12), "==>", eval_rpn(to_rpn(implicit_multiplication(tokenize(s)))))
 
 if __name__ == "__main__":
     main()
